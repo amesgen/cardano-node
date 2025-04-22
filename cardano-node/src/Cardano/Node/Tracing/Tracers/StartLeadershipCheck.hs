@@ -76,7 +76,7 @@ forgeTracerTransform nodeKern (Trace tr) =
                                 slotNo
                                 utxoSize
                                 delegMapSize
-                                (fromRational chainDensity)
+                                chainDensity
                     in pure (lc, Right (Right msg))
           (lc, Right a) ->
               pure (lc, Right a)
@@ -96,12 +96,12 @@ fragmentChainDensity ::
 #else
   AF.HasHeader (Header blk)
 #endif
-  => AF.AnchoredFragment (Header blk) -> Rational
+  => AF.AnchoredFragment (Header blk) -> Double
 fragmentChainDensity frag = calcDensity blockD slotD
   where
-    calcDensity :: Word64 -> Word64 -> Rational
+    calcDensity :: Word64 -> Word64 -> Double
     calcDensity bl sl
-      | sl > 0 = toRational bl / toRational sl
+      | sl > 0 = fromIntegral bl / fromIntegral sl
       | otherwise = 0
     slotN  = unSlotNo $ fromWithOrigin 0 (AF.headSlot frag)
     -- Slot of the tip - slot @k@ blocks back. Use 0 as the slot for genesis

@@ -666,7 +666,7 @@ traceChainMetrics (Just _ekgDirect) tForks _blockConfig _fStats tr = do
       -- TODO this is executed each time the newChain changes. How cheap is it?
       meta <- mkLOMeta Critical Public
 
-      traceD tr meta "density"     (fromRational density)
+      traceD tr meta "density"     density
       traceI tr meta "slotNum"     slots
       traceI tr meta "blockNum"    blocks
       traceI tr meta "slotInEpoch" slotInEpoch
@@ -1103,7 +1103,7 @@ traceLeadershipChecks _ft nodeKern _tverb tr = Tracer $
                  \(utxoSize, delegMapSize, chainDensity) ->
                    [ ("utxoSize",     toJSON utxoSize)
                    , ("delegMapSize", toJSON delegMapSize)
-                   , ("chainDensity", toJSON (fromRational chainDensity :: Float))
+                   , ("chainDensity", toJSON chainDensity)
                    ])
           )
       _ -> pure ()
@@ -1716,7 +1716,7 @@ traceInboundGovernorCountersMetrics (OnOff True) (Just ekgDirect) = ipgcTracer
 data ChainInformation = ChainInformation
   { slots :: Word64
   , blocks :: Word64
-  , density :: Rational
+  , density :: Double
     -- ^ the actual number of blocks created over the maximum expected number
     -- of blocks that could be created over the span of the last @k@ blocks.
   , epoch :: EpochNo
@@ -1772,12 +1772,12 @@ chainInformation selChangedInfo fork oldFrag frag blocksUncoupledDelta = ChainIn
 
 fragmentChainDensity ::
   HasHeader (Header blk)
-  => AF.AnchoredFragment (Header blk) -> Rational
+  => AF.AnchoredFragment (Header blk) -> Double
 fragmentChainDensity frag = calcDensity blockD slotD
   where
-    calcDensity :: Word64 -> Word64 -> Rational
+    calcDensity :: Word64 -> Word64 -> Double
     calcDensity bl sl
-      | sl > 0 = toRational bl / toRational sl
+      | sl > 0 = fromIntegral bl / fromIntegral sl
       | otherwise = 0
     slotN  = unSlotNo $ fromWithOrigin 0 (AF.headSlot frag)
     -- Slot of the tip - slot @k@ blocks back. Use 0 as the slot for genesis
