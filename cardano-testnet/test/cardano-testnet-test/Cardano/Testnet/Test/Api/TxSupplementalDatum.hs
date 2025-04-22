@@ -21,18 +21,20 @@ import           Cardano.Testnet
 import           Prelude
 
 import           Control.Monad
+import           Data.Bifunctor (second)
 import           Data.Default.Class
 import qualified Data.Map.Strict as M
 import           Data.Proxy
 import           Data.Set (Set)
 import           GHC.Exts (IsList (..))
+import           GHC.Stack
 import           Lens.Micro
 
 import           Testnet.Components.Query
 import           Testnet.Property.Util (integrationRetryWorkspace)
 import           Testnet.Types
 
-import           Hedgehog (Property, (===))
+import           Hedgehog
 import qualified Hedgehog as H
 import qualified Hedgehog.Extras.Test.Base as H
 import qualified Hedgehog.Extras.Test.TestWatchdog as H
@@ -84,11 +86,19 @@ hprop_tx_supp_datum = integrationRetryWorkspace 2 "api-tx-supp-dat" $ \tempAbsBa
 
   let scriptData1 = unsafeHashableScriptData $ ScriptDataBytes "CAFEBABE"
       scriptData2 = unsafeHashableScriptData $ ScriptDataBytes "DEADBEEF"
-      txDatum1 =
+      scriptData3 = unsafeHashableScriptData $ ScriptDataBytes "FEEDCOFFEE"
+  -- 4e548d257ab5309e4d029426a502e5609f7b0dbd1ac61f696f8373bd2b147e23
+  H.noteShow_ $ hashScriptDataBytes scriptData1
+  -- 24f56ef6459a29416df2e89d8df944e29591220283f198d39f7873917b8fa7c1
+  H.noteShow_ $ hashScriptDataBytes scriptData2
+  -- 5e47eaf4f0a604fcc939076f74ce7ed59d1503738973522e4d9cb99db703dcb8
+  H.noteShow_ $ hashScriptDataBytes scriptData3
+  let txDatum1 =
         TxOutDatumHash
           (convert beo)
           (hashScriptDataBytes scriptData1)
-      txDatum2 = TxOutDatumInline (convert ceo) scriptData2
+      txDatum2 = TxOutDatumInline beo scriptData2
+      txDatum3 = TxOutSupplementalDatum (convert beo) scriptData3
 
   -- Build a first transaction with txout supplemental data
   tx1Utxo <- do
@@ -99,6 +109,7 @@ hprop_tx_supp_datum = integrationRetryWorkspace 2 "api-tx-supp-dat" $ \tempAbsBa
         txOuts =
           [ TxOut addr1 txOutValue txDatum1 ReferenceScriptNone
           , TxOut addr1 txOutValue txDatum2 ReferenceScriptNone
+          , TxOut addr1 txOutValue txDatum3 ReferenceScriptNone
           ]
 
         -- build a transaction
@@ -110,7 +121,7 @@ hprop_tx_supp_datum = integrationRetryWorkspace 2 "api-tx-supp-dat" $ \tempAbsBa
 
     utxo <- UTxO <$> findAllUtxos epochStateView sbe
 
-    BalancedTxBody _ txBody _ fee <-
+    BalancedTxBody _ txBody@(ShelleyTxBody _ lbody _ (TxBodyScriptData _ (L.TxDats' datums) _) _ _) _ fee <-
       H.leftFail $
         makeTransactionBodyAutoBalance
           sbe
@@ -126,39 +137,56 @@ hprop_tx_supp_datum = integrationRetryWorkspace 2 "api-tx-supp-dat" $ \tempAbsBa
           Nothing -- keys override
     H.noteShow_ fee
 
+    H.noteShowPretty_ lbody
+
+    let bodyScriptData = fromList . map fromAlonzoData $ M.elems datums :: Set HashableScriptData
+    -- TODO: only inline datum gets included here, but should be all of them
+    -- TODO what's the actual purpose of TxSupplementalDatum - can we remove it?
+    -- TODO adding all datums breaks script integrity hash, might have to manually compute it?
+    -- https://github.com/tweag/cooked-validators/blob/9cb80810d982c9eccd3f7710a996d20f944a95ec/src/Cooked/MockChain/GenerateTx/Body.hs#L127
+    --
+    -- TODO getDataHashBabbageTxOut excludes inline datums - WHY IT HAPPENS ONLY HERE BUT NOT WHEN CALLING CLI?
+
+    -- TODO add scriptData1 when datum can be provided to transaction building
+    -- [ scriptData2
+    --   , scriptData3
+    --   ]
+    --   === bodyScriptData
+
     let tx = signShelleyTransaction sbe txBody [wit0]
     txId <- H.noteShow . getTxId $ getTxBody tx
 
-    H.evalIO (submitTxToNodeLocal connectionInfo (TxInMode sbe tx)) >>= \case
-      Net.Tx.SubmitFail reason -> H.noteShow_ reason >> H.failure
-      Net.Tx.SubmitSuccess -> H.success
+    H.noteShowPretty_ tx
+
+    submitTx sbe connectionInfo tx
 
     -- wait till transaction gets included in the block
     _ <- waitForBlocks epochStateView 1
 
     -- test if it's in UTxO set
     utxo1 <- findAllUtxos epochStateView sbe
-    let txUtxo = M.filterWithKey (\(TxIn txId' _) _ -> txId == txId') utxo1
-    3 === length txUtxo
+    txUtxo <- H.noteShowPretty $ M.filterWithKey (\(TxIn txId' _) _ -> txId == txId') utxo1
+    (length txOuts + 1) === length txUtxo
 
     let chainTxOuts =
           reverse
             . drop 1
             . reverse
-            . map (fromCtxUTxOTxOut . snd)
+            . map snd
             . toList
             $ M.filterWithKey (\(TxIn txId' _) _ -> txId == txId') utxo1
 
-    txOuts === chainTxOuts
+    (toCtxUTxOTxOut <$> txOuts) === chainTxOuts
 
     pure txUtxo
 
   do
     [(txIn1, _)] <- pure $ filter (\(_, TxOut _ _ datum _) -> datum == txDatum1) $ toList tx1Utxo
+    -- H.noteShowPretty_ tx1Utxo
     [(txIn2, _)] <- pure $ filter (\(_, TxOut _ _ datum _) -> datum == txDatum2) $ toList tx1Utxo
 
-    let scriptData3 = unsafeHashableScriptData $ ScriptDataBytes "C0FFEE"
-        txDatum = TxOutDatumInline (convert ceo) scriptData3
+    let scriptData4 = unsafeHashableScriptData $ ScriptDataBytes "C0FFEE"
+        txDatum = TxOutDatumInline beo scriptData4
         txOutValue = lovelaceToTxOutValue sbe 99_999_500
         txOut = TxOut addr0 txOutValue txDatum ReferenceScriptNone
 
@@ -172,16 +200,13 @@ hprop_tx_supp_datum = integrationRetryWorkspace 2 "api-tx-supp-dat" $ \tempAbsBa
     txBody@(ShelleyTxBody _ _ _ (TxBodyScriptData _ (L.TxDats' datums) _) _ _) <-
       H.leftFail $ createTransactionBody sbe content
     let bodyScriptData = fromList . map fromAlonzoData $ M.elems datums :: Set HashableScriptData
-    -- TODO why bodyScriptData is empty here?
     [scriptData1, scriptData2, scriptData3] === bodyScriptData
 
     let tx = signShelleyTransaction sbe txBody [wit1]
     -- H.noteShowPretty_ tx
     txId <- H.noteShow . getTxId $ getTxBody tx
 
-    H.evalIO (submitTxToNodeLocal connectionInfo (TxInMode sbe tx)) >>= \case
-      Net.Tx.SubmitFail reason -> H.noteShow_ reason >> H.failure
-      Net.Tx.SubmitSuccess -> H.success
+    submitTx sbe connectionInfo tx
 
     -- wait till transaction gets included in the block
     _ <- waitForBlocks epochStateView 1
@@ -189,6 +214,20 @@ hprop_tx_supp_datum = integrationRetryWorkspace 2 "api-tx-supp-dat" $ \tempAbsBa
     -- test if it's in UTxO set
     utxo1 <- findAllUtxos epochStateView sbe
     let txUtxo = M.filterWithKey (\(TxIn txId' _) _ -> txId == txId') utxo1
-    [txOut] === M.elems txUtxo
+    [toCtxUTxOTxOut txOut] === M.elems txUtxo
 
   H.failure
+
+submitTx
+  :: MonadTest m
+  => MonadIO m
+  => HasCallStack
+  => ShelleyBasedEra era
+  -> LocalNodeConnectInfo
+  -> Tx era
+  -> m ()
+submitTx sbe connectionInfo tx =
+  withFrozenCallStack $
+    H.evalIO (submitTxToNodeLocal connectionInfo (TxInMode sbe tx)) >>= \case
+      Net.Tx.SubmitFail reason -> H.noteShowPretty_ reason >> H.failure
+      Net.Tx.SubmitSuccess -> H.success
