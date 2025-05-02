@@ -82,6 +82,7 @@ import qualified Data.IntPSQ as Pq
 import qualified Data.List as List
 import qualified Data.Text as Text
 import           Data.Time (NominalDiffTime)
+import qualified Data.Scientific as Scientific
 import           Data.Word (Word32, Word64)
 import           Network.TypedProtocol.Core
 
@@ -1516,7 +1517,10 @@ instance LogFormatting TraceStartLeadershipCheckPlus where
                 , "slot" .= toJSON (unSlotNo tsSlotNo)
                 , "utxoSize" .= Number (fromIntegral tsUtxoSize)
                 , "delegMapSize" .= Number (fromIntegral tsDelegMapSize)
-                , "chainDensity" .= (toJSON tsChainDensity)
+                , "chainDensity" .= Number $
+                    case Scientific.fromRationalRepetendLimited 10 tsChainDensity of
+                      (Left  (sc, _)) -> sc
+                      (Right (sc, _)) -> sc
                 ]
   forHuman TraceStartLeadershipCheckPlus {..} =
       "Checking for leadership in slot " <> showT (unSlotNo tsSlotNo)

@@ -137,6 +137,8 @@ import           Data.IntPSQ (IntPSQ)
 import qualified Data.IntPSQ as Pq
 import qualified Data.Map.Strict as Map
 import           Data.Proxy (Proxy (..))
+import           Data.Ratio ((%))
+import qualified Data.Scientific as Scientific
 import           Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
@@ -666,7 +668,7 @@ traceChainMetrics (Just _ekgDirect) tForks _blockConfig _fStats tr = do
       -- TODO this is executed each time the newChain changes. How cheap is it?
       meta <- mkLOMeta Critical Public
 
-      traceD tr meta "density"     density
+      traceD tr meta "density"     (fromRational density)
       traceI tr meta "slotNum"     slots
       traceI tr meta "blockNum"    blocks
       traceI tr meta "slotInEpoch" slotInEpoch
@@ -1103,7 +1105,11 @@ traceLeadershipChecks _ft nodeKern _tverb tr = Tracer $
                  \(utxoSize, delegMapSize, chainDensity) ->
                    [ ("utxoSize",     toJSON utxoSize)
                    , ("delegMapSize", toJSON delegMapSize)
-                   , ("chainDensity", toJSON chainDensity)
+                   , ("chainDensity", Number $
+                        case Scientific.fromRationalRepetendLimited 10 chainDensity of
+                            (Left  (sc, _)) -> sc
+                            (Right (sc, _)) -> sc
+                     )
                    ])
           )
       _ -> pure ()
@@ -1716,7 +1722,7 @@ traceInboundGovernorCountersMetrics (OnOff True) (Just ekgDirect) = ipgcTracer
 data ChainInformation = ChainInformation
   { slots :: Word64
   , blocks :: Word64
-  , density :: Double
+  , density :: Rational
     -- ^ the actual number of blocks created over the maximum expected number
     -- of blocks that could be created over the span of the last @k@ blocks.
   , epoch :: EpochNo
@@ -1772,12 +1778,12 @@ chainInformation selChangedInfo fork oldFrag frag blocksUncoupledDelta = ChainIn
 
 fragmentChainDensity ::
   HasHeader (Header blk)
-  => AF.AnchoredFragment (Header blk) -> Double
+  => AF.AnchoredFragment (Header blk) -> Rational
 fragmentChainDensity frag = calcDensity blockD slotD
   where
-    calcDensity :: Word64 -> Word64 -> Double
+    calcDensity :: Word64 -> Word64 -> Rational
     calcDensity bl sl
-      | sl > 0 = fromIntegral bl / fromIntegral sl
+      | sl > 0 = toInteger bl % toInteger sl
       | otherwise = 0
     slotN  = unSlotNo $ fromWithOrigin 0 (AF.headSlot frag)
     -- Slot of the tip - slot @k@ blocks back. Use 0 as the slot for genesis

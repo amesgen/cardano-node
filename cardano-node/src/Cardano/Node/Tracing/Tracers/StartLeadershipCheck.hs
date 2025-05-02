@@ -47,7 +47,7 @@ data TraceStartLeadershipCheckPlus =
         tsSlotNo       :: SlotNo
       , tsUtxoSize     :: Int
       , tsDelegMapSize :: Int
-      , tsChainDensity :: Double
+      , tsChainDensity :: Rational
     }
 
 forgeTracerTransform ::
@@ -96,12 +96,12 @@ fragmentChainDensity ::
 #else
   AF.HasHeader (Header blk)
 #endif
-  => AF.AnchoredFragment (Header blk) -> Double
+  => AF.AnchoredFragment (Header blk) -> Rational
 fragmentChainDensity frag = calcDensity blockD slotD
   where
-    calcDensity :: Word64 -> Word64 -> Double
+    calcDensity :: Word64 -> Word64 -> Rational
     calcDensity bl sl
-      | sl > 0 = fromIntegral bl / fromIntegral sl
+      | sl > 0 = toInteger bl % toInteger sl
       | otherwise = 0
     slotN  = unSlotNo $ fromWithOrigin 0 (AF.headSlot frag)
     -- Slot of the tip - slot @k@ blocks back. Use 0 as the slot for genesis
