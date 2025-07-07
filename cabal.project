@@ -96,3 +96,14 @@ if impl (ghc >= 9.12)
 
 constraints:
     hedgehog-extras == 0.7.0.0
+
+source-repository-package
+  type: git
+  location: https://github.com/amesgen/ouroboros-consensus
+  tag: 9d8b52f056a8dd4b6d40688818e0484b0ff2629e
+  --sha256: sha256-PEFo9CP92T5G4rmrD3NH0aXotc3aBMjemLuOLtdmDXQ=
+  subdir:
+    ouroboros-consensus
+    ouroboros-consensus-diffusion
+    ouroboros-consensus-protocol
+    ouroboros-consensus-cardano
